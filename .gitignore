@@ -1,0 +1,29 @@
+# Include code, configs, dependencies, and essential documentation.
+*
+!*/
+!*.py
+!*.conf
+!*.sh
+!requirements*.txt
+!environment.yml
+!environment.yaml
+!README.txt
+!README.md
+!LICENSE
+!NOTICE
+!.gitignore
+
+# Exclude data, environments, and generated outputs.
+__pycache__/
+.venv/
+venv/
+.agents/
+.codex/
+data/
+datasets/
+exp_result/
+results/
+logs/
+weights/
+checkpoints/
+wandb/

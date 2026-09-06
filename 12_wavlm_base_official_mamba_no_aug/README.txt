@@ -1,0 +1,7 @@
+Run command
+
+cd code
+python3.10 main.py \
+  --config config/AST_Mamba_ASVspoof5.conf \
+  --output_dir /path/to/results \
+  --comment wavlm_base_official_mamba_no_aug
