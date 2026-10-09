@@ -5167,11 +5167,19 @@ def compute_model_loss(
     return loss, {"total": loss.detach()}
 
 
-def maybe_clip_gradients(model: nn.Module, grad_clip_norm: float) -> None:
+def maybe_clip_gradients(
+    optimizer: torch.optim.Optimizer,
+    grad_clip_norm: float,
+) -> None:
     """Apply gradient clipping if configured."""
 
     if grad_clip_norm > 0.0:
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_norm)
+        parameters = [
+            parameter
+            for group in optimizer.param_groups
+            for parameter in group["params"]
+        ]
+        torch.nn.utils.clip_grad_norm_(parameters, max_norm=grad_clip_norm)
 
 
 def autocast_context(device: torch.device, enabled: bool) -> Any:
@@ -5208,7 +5216,7 @@ def process_microbatch_group(
             (loss / divisor).backward()
             weighted_loss_sum += loss.item() * len(micro_batch.waveforms)
 
-        maybe_clip_gradients(model, grad_clip_norm)
+        maybe_clip_gradients(base_optimizer, grad_clip_norm)
         training_objects.optimizer.first_step(zero_grad=True)
 
         # ----------------------------------------------------
@@ -5218,7 +5226,7 @@ def process_microbatch_group(
             loss, _ = compute_model_loss(model, micro_batch, device)
             (loss / divisor).backward()
 
-        maybe_clip_gradients(model, grad_clip_norm)
+        maybe_clip_gradients(base_optimizer, grad_clip_norm)
         training_objects.optimizer.second_step(zero_grad=True)
         step_completed = True
     else:
@@ -5239,7 +5247,7 @@ def process_microbatch_group(
 
         if scaler is not None and scaler.is_enabled():
             scaler.unscale_(base_optimizer)
-        maybe_clip_gradients(model, grad_clip_norm)
+        maybe_clip_gradients(base_optimizer, grad_clip_norm)
 
         if scaler is not None and scaler.is_enabled():
             previous_scale = float(scaler.get_scale())
@@ -5985,6 +5993,8 @@ def main(args: argparse.Namespace) -> None:
 
     config = apply_default_config(config)
     validate_config(config)
+    torch.set_num_threads(int(config.get("torch_num_threads", 1)))
+    torch.set_num_interop_threads(int(config.get("torch_num_interop_threads", 1)))
     set_seed(args.seed, config)
 
     output_dir = Path(args.output_dir)

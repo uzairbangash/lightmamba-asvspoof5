@@ -260,13 +260,17 @@ class CodecAwareAugmentBank(nn.Module):
         return wav + scale * noise
 
     def bandlimit_telephone(self, wav: torch.Tensor) -> torch.Tensor:
-        wav = torchaudio.functional.highpass_biquad(wav, self.sample_rate, 300)
-        wav = torchaudio.functional.lowpass_biquad(wav, self.sample_rate, 3400)
+        with torch.autocast(device_type=wav.device.type, enabled=False):
+            wav = wav.float()
+            wav = torchaudio.functional.highpass_biquad(wav, self.sample_rate, 300)
+            wav = torchaudio.functional.lowpass_biquad(wav, self.sample_rate, 3400)
         return wav
 
     def bandlimit_bluetooth(self, wav: torch.Tensor) -> torch.Tensor:
-        wav = torchaudio.functional.highpass_biquad(wav, self.sample_rate, 120)
-        wav = torchaudio.functional.lowpass_biquad(wav, self.sample_rate, 7200)
+        with torch.autocast(device_type=wav.device.type, enabled=False):
+            wav = wav.float()
+            wav = torchaudio.functional.highpass_biquad(wav, self.sample_rate, 120)
+            wav = torchaudio.functional.lowpass_biquad(wav, self.sample_rate, 7200)
         return wav
 
     def narrowband_roundtrip(self, wav: torch.Tensor) -> torch.Tensor:
@@ -277,7 +281,9 @@ class CodecAwareAugmentBank(nn.Module):
     def codec_proxy_roundtrip(self, wav: torch.Tensor) -> torch.Tensor:
         target_rate = random.choice([8_000, 12_000, 14_000])
         lowpass_hz = min(target_rate // 2 - 200, 6_800)
-        wav = torchaudio.functional.lowpass_biquad(wav, self.sample_rate, max(1_600, lowpass_hz))
+        with torch.autocast(device_type=wav.device.type, enabled=False):
+            wav = wav.float()
+            wav = torchaudio.functional.lowpass_biquad(wav, self.sample_rate, max(1_600, lowpass_hz))
         down = torchaudio.functional.resample(wav.unsqueeze(0), self.sample_rate, target_rate).squeeze(0)
         down = self.quantize(down, bits=random.choice([6, 7, 8]))
         down = self.packet_loss(down, frame_ms=random.choice([10, 20]), zero_fill=random.random() < 0.5)
@@ -765,8 +771,9 @@ class Model(nn.Module):
         self._apply_freezing()
 
         # L2-SP anchor for trainable WavLM parameters only.
+        self._wavlm_named_parameters = dict(self.wavlm.named_parameters())
         self.anchor: dict[str, torch.Tensor] = {}
-        for name, parameter in self.wavlm.named_parameters():
+        for name, parameter in self._wavlm_named_parameters.items():
             if parameter.requires_grad:
                 self.anchor[name] = parameter.detach().clone()
 
@@ -803,7 +810,7 @@ class Model(nn.Module):
             for parameter in self.wavlm.feature_extractor.parameters():
                 parameter.requires_grad = False
 
-        for name, parameter in self.wavlm.named_parameters():
+        for name, parameter in self._wavlm_named_parameters.items():
             if parameter.requires_grad and name not in self.anchor:
                 self.anchor[name] = parameter.detach().clone()
 
@@ -830,7 +837,7 @@ class Model(nn.Module):
             for parameter in self.wavlm.feature_extractor.parameters():
                 parameter.requires_grad = False
 
-        for name, parameter in self.wavlm.named_parameters():
+        for name, parameter in self._wavlm_named_parameters.items():
             if parameter.requires_grad and name not in self.anchor:
                 self.anchor[name] = parameter.detach().clone()
 
@@ -889,7 +896,7 @@ class Model(nn.Module):
 
         base_named_params = [
             (name, parameter)
-            for name, parameter in self.wavlm.named_parameters()
+            for name, parameter in self._wavlm_named_parameters.items()
             if "encoder.layers." not in name
         ]
         base_lr = backbone_lr * (layerwise_lr_decay ** max(1, num_layers))
@@ -897,9 +904,11 @@ class Model(nn.Module):
 
         for reverse_depth, layer_index in enumerate(range(num_layers - 1, -1, -1)):
             layer_lr = backbone_lr * (layerwise_lr_decay ** reverse_depth)
+            layer_prefix = f"encoder.layers.{layer_index}."
             layer_named_params = [
-                (name, parameter)
-                for name, parameter in self.wavlm.encoder.layers[layer_index].named_parameters()
+                (name[len(layer_prefix):], parameter)
+                for name, parameter in self._wavlm_named_parameters.items()
+                if name.startswith(layer_prefix)
             ]
             layer_named_params = [
                 (f"encoder.layers.{layer_index}.{name}", parameter)
@@ -1124,7 +1133,7 @@ class Model(nn.Module):
         total = torch.tensor(0.0, device=next(self.parameters()).device)
         count = 0
 
-        for name, parameter in self.wavlm.named_parameters():
+        for name, parameter in self._wavlm_named_parameters.items():
             if name in self.anchor and parameter.requires_grad:
                 total = total + (parameter - self.anchor[name].to(parameter.device)).pow(2).mean()
                 count += 1

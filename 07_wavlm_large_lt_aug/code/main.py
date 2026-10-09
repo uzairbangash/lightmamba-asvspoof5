@@ -5168,10 +5168,16 @@ def compute_model_loss(
 
 
 def maybe_clip_gradients(model: nn.Module, grad_clip_norm: float) -> None:
-    """Apply gradient clipping if configured."""
+    """Clip a stable parameter list, including parameters unfrozen later."""
 
     if grad_clip_norm > 0.0:
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_norm)
+        parameters = model.__dict__.get("_gradient_clip_parameters")
+        if parameters is None:
+            # The architecture stays fixed during training. Keep all parameters,
+            # including frozen ones, so gradual unfreezing needs no cache refresh.
+            parameters = tuple(model.parameters())
+            model.__dict__["_gradient_clip_parameters"] = parameters
+        torch.nn.utils.clip_grad_norm_(parameters, max_norm=grad_clip_norm)
 
 
 def autocast_context(device: torch.device, enabled: bool) -> Any:

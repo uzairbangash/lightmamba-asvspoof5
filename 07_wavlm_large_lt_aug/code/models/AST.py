@@ -1042,19 +1042,23 @@ class Model(nn.Module):
     # Losses
     # --------------------------------------------------------
     def l2_anchor_loss(self) -> torch.Tensor:
+        # The backbone topology stays fixed. Cache all parameters, including
+        # frozen ones; check the current anchor and requires_grad each call.
+        parameters = self.__dict__.get("_l2_named_parameters")
+        if parameters is None:
+            parameters = tuple(self.wavlm.named_parameters())
+            self.__dict__["_l2_named_parameters"] = parameters
+        device = parameters[0][1].device
+        total = torch.tensor(0.0, device=device)
         if not self.anchor:
-            return torch.tensor(0.0, device=next(self.parameters()).device)
-
-        total = torch.tensor(0.0, device=next(self.parameters()).device)
+            return total
         count = 0
-
-        for name, parameter in self.wavlm.named_parameters():
+        for name, parameter in parameters:
             if name in self.anchor and parameter.requires_grad:
                 total = total + (parameter - self.anchor[name].to(parameter.device)).pow(2).mean()
                 count += 1
-
         if count == 0:
-            return torch.tensor(0.0, device=next(self.parameters()).device)
+            return total
         return total / count
 
     def compute_loss(
